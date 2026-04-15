@@ -1,3 +1,7 @@
+/*
+ * -> Solution for https://leetgpu.com/challenges/reduction
+ */
+
 #include <iostream>
 #include <vector>
 #include <numeric>
