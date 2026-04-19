@@ -37,48 +37,34 @@ __global__ void compute_scores_kernel(const float* Q, const float* K, float* S, 
 }
 
 /**
- * Compute row-wise the maximum and the sum of the score matrix.
+ * Online Softmax kernel merges max/sum calculation and normalization.
  * @param S Score matrix (MxN)
- * @param row_max Where the row-wise maximum will be stored
- * @param row_sum Where the row-wise sum will be stored, including max-trick e^(S - max)
+ * @param A Attention weights output array (MxN)
  * @param M Number of rows in S
  * @param N Number of columns in S
  */
-__global__ void compute_row_max_sum_kernel(const float* S, float* row_max, float *row_sum, const int M, const int N) {
+__global__ void online_softmax_kernel(const float* S, float* A, const int M, const int N) {
     const unsigned int row = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (row < M) {
-        float local_max = -FLT_MAX;
-        float local_sum = 0.0f;
+        float m = -FLT_MAX;
+        float d = 0.0f;
+
+        // Pass 1: Compute online max and sum
         for (int col = 0; col < N; col++) {
-            local_max = fmaxf(local_max, S[row * N + col]);
+            float x = S[row * N + col];
+            if (x > m) {
+                d = d * expf(m - x) + 1.0f;
+                m = x;
+            } else {
+                d += expf(x - m);
+            }
         }
 
+        // Pass 2: Apply normalization and write to global memory
         for (int col = 0; col < N; col++) {
-            local_sum += expf(S[row * N + col] - local_max);
+            A[row * N + col] = expf(S[row * N + col] - m) / d;
         }
-
-        row_max[row] = local_max;
-        row_sum[row] = local_sum;
-    }
-}
-
-/**
- * Softmax kernel calculates softmax using the max trick
- * @param S Score matrix (MxN)
- * @param A Attention weights output array
- * @param row_max Row-wise maximum
- * @param row_sum Row-wise-sum
- * @param M Number of rows in the score matrix
- * @param N number of columns in the score matrix
- */
-__global__ void softmax_kernel(const float* S, float* A, const float* row_max, const float* row_sum, const int M, const int N) {
-    const unsigned int row = blockIdx.y * blockDim.y + threadIdx.y;
-    const unsigned int col = blockIdx.x * blockDim.x + threadIdx.x;
-    if (row < M && col < N) {
-        const float max_val = row_max[row];
-        const float sum_val = row_sum[row];
-        A[row * N + col] = expf(S[row * N + col] - max_val) / sum_val;
     }
 }
 
@@ -110,26 +96,17 @@ extern "C" void solve(const float* Q, const float* K, const float* V, float* out
     dim3 blocksPerGrid_2D((N + threadsPerBlock_2D.x - 1) / threadsPerBlock_2D.x,
                        (M + threadsPerBlock_2D.y - 1) / threadsPerBlock_2D.y);
 
-    float *d_score_matrix, *d_row_max, *d_row_sum, *d_attention_weights;
+    float *d_score_matrix, *d_attention_weights;
     cudaMalloc(&d_score_matrix, M * N * sizeof(float));
-    cudaMalloc(&d_row_max, M * sizeof(float));
-    cudaMalloc(&d_row_sum, M * sizeof(float));
     cudaMalloc(&d_attention_weights, M * N * sizeof(float));
-
-
-    cudaMemset(d_row_max, 0, M * sizeof(float));
-    cudaMemset(d_row_sum, 0, M * sizeof(float));
 
     // Step 1: Compute QK^T / sqrt(d)
     compute_scores_kernel<<<blocksPerGrid_2D, threadsPerBlock_2D>>>(Q, K, d_score_matrix, M, N, d);
 
-    // Step 2: Compute row-wise maximum and row-wise sum
+    // Step 2 & 3: Online Softmax (One kernel for max, sum, and division)
     int threadsPerBlock_1D = 256;
     int blocksPerGrid_1D = (M + threadsPerBlock_1D - 1) / threadsPerBlock_1D;
-    compute_row_max_sum_kernel<<<blocksPerGrid_1D, threadsPerBlock_1D>>>(d_score_matrix, d_row_max, d_row_sum, M, N);
-
-    // Step 3: Compute softmax - A (attention weights)
-    softmax_kernel<<<blocksPerGrid_2D, threadsPerBlock_2D>>>(d_score_matrix, d_attention_weights, d_row_max, d_row_sum, M, N);
+    online_softmax_kernel<<<blocksPerGrid_1D, threadsPerBlock_1D>>>(d_score_matrix, d_attention_weights, M, N);
 
     // Step 4: Final output A * V: M x d
     dim3 blocksPerGrid_out((d + threadsPerBlock_2D.x - 1) / threadsPerBlock_2D.x,
@@ -139,8 +116,6 @@ extern "C" void solve(const float* Q, const float* K, const float* V, float* out
     cudaDeviceSynchronize();
 
     cudaFree(d_score_matrix);
-    cudaFree(d_row_max);
-    cudaFree(d_row_sum);
     cudaFree(d_attention_weights);
 }
 
