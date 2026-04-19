@@ -16,3 +16,4 @@ endif()
 
 add_executable(01_reduction 01_reduction/01_reduction.cu)
 add_executable(02_softmax 02_softmax/02_softmax.cu)
+add_executable(03_softmax_attention 03_softmax_attention/03_softmax_attention.cu)
