@@ -103,12 +103,12 @@ extern "C" void solve(const float* Q, const float* K, const float* V, float* out
     // Step 1: Compute QK^T / sqrt(d)
     compute_scores_kernel<<<blocksPerGrid_2D, threadsPerBlock_2D>>>(Q, K, d_score_matrix, M, N, d);
 
-    // Step 2 & 3: Online Softmax (One kernel for max, sum, and division)
+    // Step 2: Online Softmax
     int threadsPerBlock_1D = 256;
     int blocksPerGrid_1D = (M + threadsPerBlock_1D - 1) / threadsPerBlock_1D;
     online_softmax_kernel<<<blocksPerGrid_1D, threadsPerBlock_1D>>>(d_score_matrix, d_attention_weights, M, N);
 
-    // Step 4: Final output A * V: M x d
+    // Step 3: Final output A * V: M x d
     dim3 blocksPerGrid_out((d + threadsPerBlock_2D.x - 1) / threadsPerBlock_2D.x,
                            (M + threadsPerBlock_2D.y - 1) / threadsPerBlock_2D.y);
     matmul_naive_kernel<<<blocksPerGrid_out, threadsPerBlock_2D>>>(d_attention_weights, V, output, M, N, d);
