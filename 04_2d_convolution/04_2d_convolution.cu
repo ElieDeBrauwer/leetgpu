@@ -11,30 +11,48 @@
 __constant__ float c_kernel[MAX_KERNEL_SIZE];
 
 __global__ void conv2d(const float *input, float *output, const int input_rows, const int input_cols, const int kernel_rows, const int kernel_cols, const int output_rows, const int output_cols) {
-    const unsigned int row = blockIdx.y * blockDim.y + threadIdx.y;
-    const unsigned int col = blockIdx.x * blockDim.x + threadIdx.x;
+    // Shared memory tiling
+    extern __shared__ float s_tile[];
 
-    if (row >= output_rows || col >= output_cols) {
-        return;
-    }
+    const unsigned int ty = threadIdx.y;
+    const unsigned int tx = threadIdx.x;
+    const unsigned int row = blockIdx.y * blockDim.y + ty;
+    const unsigned int col = blockIdx.x * blockDim.x + tx;
 
-    float sum = 0.0f;
-    for (int i = 0; i < kernel_rows; i++) {
-        for (int j = 0; j < kernel_cols; j++) {
-            unsigned int input_row = row + i;
-            unsigned int input_col = col + j;
-            sum += input[input_row * input_cols + input_col] * c_kernel[i * kernel_cols + j];
+    const unsigned int shared_rows = blockDim.y + kernel_rows - 1;
+    const unsigned int shared_cols = blockDim.x + kernel_cols - 1;
+
+    // Load data into shared memory
+    for (unsigned int i = ty; i < shared_rows; i += blockDim.y) {
+        const unsigned int input_row = blockIdx.y * blockDim.y + i;
+        for (unsigned int j = tx; j < shared_cols; j += blockDim.x) {
+            const unsigned int input_col = blockIdx.x * blockDim.x + j;
+            if (input_row < input_rows && input_col < input_cols) {
+                s_tile[i * shared_cols + j] = input[input_row * input_cols + input_col];
+            } else {
+                s_tile[i * shared_cols + j] = 0.0f;
+            }
         }
     }
+    __syncthreads();
 
-    output[row * output_cols + col] = sum;
+    // Actual convolution on the tile
+    if (row < output_rows && col < output_cols) {
+        float sum = 0.0f;
+        for (int i = 0; i < kernel_rows; i++) {
+            for (int j = 0; j < kernel_cols; j++) {
+                sum += s_tile[(ty + i) * shared_cols + (tx + j)] * c_kernel[i * kernel_cols + j];
+            }
+        }
+        output[row * output_cols + col] = sum;
+    }
 }
 
 // input, kernel, output are device pointers
-extern "C" void solve(const float* input, const float* kernel, float* output, int input_rows,
-                      int input_cols, int kernel_rows, int kernel_cols) {
-    int output_rows = input_rows - kernel_rows + 1;
-    int output_cols = input_cols - kernel_cols + 1;
+extern "C" void solve(const float* input, const float* kernel, float* output, const int input_rows,
+                      const int input_cols, const int kernel_rows, const int kernel_cols) {
+    const int output_rows = input_rows - kernel_rows + 1;
+    const int output_cols = input_cols - kernel_cols + 1;
 
     // Copy kernel to constant memory
     size_t kernel_size = kernel_rows * kernel_cols * sizeof(float);
@@ -45,7 +63,12 @@ extern "C" void solve(const float* input, const float* kernel, float* output, in
     dim3 threadsPerBlock(16, 16);
     dim3 blocksPerGrid((output_cols + threadsPerBlock.x - 1) / threadsPerBlock.x,
                        (output_rows + threadsPerBlock.y - 1) / threadsPerBlock.y);
-    conv2d<<<blocksPerGrid, threadsPerBlock>>>(
+
+    const unsigned int shared_rows = threadsPerBlock.y + kernel_rows - 1;
+    const unsigned int shared_cols = threadsPerBlock.x + kernel_cols - 1;
+    size_t shared_mem_size = shared_rows * shared_cols * sizeof(float);
+
+    conv2d<<<blocksPerGrid, threadsPerBlock, shared_mem_size>>>(
         input, output, input_rows, input_cols, kernel_rows, kernel_cols,
         output_rows, output_cols
     );
