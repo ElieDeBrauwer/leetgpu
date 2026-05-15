@@ -17,24 +17,24 @@ __global__ void conv3d(const float *input, float *output,
     
     extern __shared__ float s_tile[];
 
-    const int tz = threadIdx.z;
-    const int ty = threadIdx.y;
-    const int tx = threadIdx.x;
-    const int out_z = blockIdx.z * blockDim.z + tz;
-    const int out_y = blockIdx.y * blockDim.y + ty;
-    const int out_x = blockIdx.x * blockDim.x + tx;
+    const unsigned int tz = threadIdx.z;
+    const unsigned int ty = threadIdx.y;
+    const unsigned int tx = threadIdx.x;
+    const unsigned int out_z = blockIdx.z * blockDim.z + tz;
+    const unsigned int out_y = blockIdx.y * blockDim.y + ty;
+    const unsigned int out_x = blockIdx.x * blockDim.x + tx;
 
-    const int shared_depth = blockDim.z + kernel_depth - 1;
-    const int shared_rows = blockDim.y + kernel_rows - 1;
-    const int shared_cols = blockDim.x + kernel_cols - 1;
+    const unsigned int shared_depth = blockDim.z + kernel_depth - 1;
+    const unsigned int shared_rows = blockDim.y + kernel_rows - 1;
+    const unsigned int shared_cols = blockDim.x + kernel_cols - 1;
 
     // Load data into shared memory
-    for (int i = tz; i < shared_depth; i += blockDim.z) {
-        int in_z = blockIdx.z * blockDim.z + i;
-        for (int j = ty; j < shared_rows; j += blockDim.y) {
-            int in_y = blockIdx.y * blockDim.y + j;
-            for (int k = tx; k < shared_cols; k += blockDim.x) {
-                int in_x = blockIdx.x * blockDim.x + k;
+    for (unsigned int i = tz; i < shared_depth; i += blockDim.z) {
+        const unsigned int in_z = blockIdx.z * blockDim.z + i;
+        for (unsigned int j = ty; j < shared_rows; j += blockDim.y) {
+            const unsigned int in_y = blockIdx.y * blockDim.y + j;
+            for (unsigned int k = tx; k < shared_cols; k += blockDim.x) {
+                const unsigned int in_x = blockIdx.x * blockDim.x + k;
                 if (in_z < input_depth && in_y < input_rows && in_x < input_cols) {
                     s_tile[i * shared_rows * shared_cols + j * shared_cols + k] = input[in_z * input_rows * input_cols + in_y * input_cols + in_x];
                 } else {
@@ -74,9 +74,9 @@ extern "C" void solve(const float* input, const float* kernel, float* output,
                        (output_rows + threadsPerBlock.y - 1) / threadsPerBlock.y,
                        (output_depth + threadsPerBlock.z - 1) / threadsPerBlock.z);
 
-    int shared_depth = threadsPerBlock.z + kernel_depth - 1;
-    int shared_rows = threadsPerBlock.y + kernel_rows - 1;
-    int shared_cols = threadsPerBlock.x + kernel_cols - 1;
+    const unsigned int shared_depth = threadsPerBlock.z + kernel_depth - 1;
+    const unsigned int shared_rows = threadsPerBlock.y + kernel_rows - 1;
+    const unsigned int shared_cols = threadsPerBlock.x + kernel_cols - 1;
     size_t shared_mem_size = shared_depth * shared_rows * shared_cols * sizeof(float);
 
     conv3d<<<blocksPerGrid, threadsPerBlock, shared_mem_size>>>(
@@ -90,7 +90,8 @@ extern "C" void solve(const float* input, const float* kernel, float* output,
 
 enum TestCaseType {
     TESTCASE_1,
-    TESTCASE_2
+    TESTCASE_2,
+    TESTCASE_3
 };
 
 void testcase(TestCaseType type) {
@@ -122,6 +123,15 @@ void testcase(TestCaseType type) {
             1, 1, 1, 1
         };
         h_expected = {36};
+    } else if (type == TESTCASE_3) {
+        in_d = 256; in_r = 256; in_c = 256;
+        k_d = 5; k_r = 5; k_c = 5;
+        h_input.assign(in_d * in_r * in_c, 1.0f);
+        h_kernel.assign(k_d * k_r * k_c, 1.0f);
+        int out_d = in_d - k_d + 1;
+        int out_r = in_r - k_r + 1;
+        int out_c = in_c - k_c + 1;
+        h_expected.assign(out_d * out_r * out_c, 125.0f);
     } else {
         return;
     }
@@ -133,22 +143,33 @@ void testcase(TestCaseType type) {
     std::vector<float> h_output(out_size);
 
     float *d_input, *d_kernel, *d_output;
-    cudaMalloc(&d_input, h_input.size() * sizeof(float));
-    cudaMalloc(&d_kernel, h_kernel.size() * sizeof(float));
-    cudaMalloc(&d_output, out_size * sizeof(float));
+    cudaMalloc(&d_input, (size_t)in_d * in_r * in_c * sizeof(float));
+    cudaMalloc(&d_kernel, (size_t)k_d * k_r * k_c * sizeof(float));
+    cudaMalloc(&d_output, (size_t)out_size * sizeof(float));
 
-    cudaMemcpy(d_input, h_input.data(), h_input.size() * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_kernel, h_kernel.data(), h_kernel.size() * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_input, h_input.data(), (size_t)in_d * in_r * in_c * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_kernel, h_kernel.data(), (size_t)k_d * k_r * k_c * sizeof(float), cudaMemcpyHostToDevice);
+
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+    cudaEventRecord(start);
 
     solve(d_input, d_kernel, d_output, in_d, in_r, in_c, k_d, k_r, k_c);
 
-    cudaMemcpy(h_output.data(), d_output, out_size * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, start, stop);
+
+    cudaMemcpy(h_output.data(), d_output, (size_t)out_size * sizeof(float), cudaMemcpyDeviceToHost);
 
     bool all_passed = true;
     for (int i = 0; i < out_size; ++i) {
         if (std::abs(h_output[i] - h_expected[i]) > 1e-3) {
             std::cout << "Test failed at index " << i << "! Expected " << h_expected[i] << ", got " << h_output[i] << std::endl;
             all_passed = false;
+            break;
         }
     }
 
@@ -157,16 +178,23 @@ void testcase(TestCaseType type) {
     } else {
         std::cout << "Test case failed!" << std::endl;
     }
+    std::cout << "Solve duration: " << milliseconds << " ms" << std::endl;
 
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
     cudaFree(d_input);
     cudaFree(d_kernel);
     cudaFree(d_output);
 }
 
 int main() {
+    std::cout << "Running TESTCASE_1 (cold GPU):" << std::endl;
+    testcase(TESTCASE_1);
     std::cout << "Running TESTCASE_1:" << std::endl;
     testcase(TESTCASE_1);
     std::cout << "\nRunning TESTCASE_2:" << std::endl;
     testcase(TESTCASE_2);
+    std::cout << "\nRunning TESTCASE_3:" << std::endl;
+    testcase(TESTCASE_3);
     return 0;
 }
