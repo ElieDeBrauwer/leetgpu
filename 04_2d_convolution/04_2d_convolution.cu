@@ -7,10 +7,12 @@
 #include <vector>
 #include <cmath>
 
+#define MAX_KERNEL_SIZE 1024
+__constant__ float c_kernel[MAX_KERNEL_SIZE];
 
-__global__ void conv2d(const float *input, const float *kernel,float *output, const int input_rows, const int input_cols, const int kernel_rows, const int kernel_cols, const int output_rows, const int output_cols) {
-    unsigned int row = blockIdx.y * blockDim.y + threadIdx.y;
-    unsigned int col = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void conv2d(const float *input, float *output, const int input_rows, const int input_cols, const int kernel_rows, const int kernel_cols, const int output_rows, const int output_cols) {
+    const unsigned int row = blockIdx.y * blockDim.y + threadIdx.y;
+    const unsigned int col = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (row >= output_rows || col >= output_cols) {
         return;
@@ -21,7 +23,7 @@ __global__ void conv2d(const float *input, const float *kernel,float *output, co
         for (int j = 0; j < kernel_cols; j++) {
             unsigned int input_row = row + i;
             unsigned int input_col = col + j;
-            sum += input[input_row * input_cols + input_col] * kernel[i * kernel_cols + j];
+            sum += input[input_row * input_cols + input_col] * c_kernel[i * kernel_cols + j];
         }
     }
 
@@ -34,11 +36,17 @@ extern "C" void solve(const float* input, const float* kernel, float* output, in
     int output_rows = input_rows - kernel_rows + 1;
     int output_cols = input_cols - kernel_cols + 1;
 
+    // Copy kernel to constant memory
+    size_t kernel_size = kernel_rows * kernel_cols * sizeof(float);
+    if (kernel_rows * kernel_cols <= MAX_KERNEL_SIZE) {
+        cudaMemcpyToSymbol(c_kernel, kernel, kernel_size, 0, cudaMemcpyDeviceToDevice);
+    }
+
     dim3 threadsPerBlock(16, 16);
     dim3 blocksPerGrid((output_cols + threadsPerBlock.x - 1) / threadsPerBlock.x,
                        (output_rows + threadsPerBlock.y - 1) / threadsPerBlock.y);
     conv2d<<<blocksPerGrid, threadsPerBlock>>>(
-        input, kernel, output, input_rows, input_cols, kernel_rows, kernel_cols,
+        input, output, input_rows, input_cols, kernel_rows, kernel_cols,
         output_rows, output_cols
     );
     cudaDeviceSynchronize();
