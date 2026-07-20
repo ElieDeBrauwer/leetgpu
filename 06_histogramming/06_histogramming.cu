@@ -5,6 +5,8 @@
 #include <cuda_runtime.h>
 #include <iostream>
 #include <vector>
+#include <random>
+#include <algorithm>
 
 __global__ static void histogram_kernel(const int *input, int *output, int N) {
     unsigned int thread_id = blockIdx.x * blockDim.x + threadIdx.x;
@@ -19,6 +21,9 @@ extern "C" void solve(const int* input, int* histogram, int N, int num_bins) {
     int threads_per_block = 256;
     int blocks_per_grid = (N + threads_per_block - 1) / threads_per_block;
 
+    // Initialize output
+    cudaMemset(histogram, 0, static_cast<size_t>(num_bins) * sizeof(int));
+
     histogram_kernel<<<blocks_per_grid, threads_per_block>>>(input, histogram, N);
 }
 
@@ -26,7 +31,8 @@ namespace {
     enum TestCaseType {
         TESTCASE_1,
         TESTCASE_2,
-        TESTCASE_3
+        TESTCASE_3,
+        TESTCASE_4
     };
 }
 
@@ -42,7 +48,7 @@ static void testcase(TestCaseType type) {
         N = 4; num_bins = 3;
         h_input = {3, 3, 3, 3};
         h_expected = {0, 0, 0, 4, 0};
-    } else if (type == TESTCASE_3) {
+    } else if (type == TESTCASE_3 || type == TESTCASE_4) {
         N = 1024 * 1024 * 1024;
         num_bins = 1024;
         for (int i = 0; i < num_bins * num_bins; ++i) {
@@ -51,6 +57,12 @@ static void testcase(TestCaseType type) {
             }
         }
         h_expected = std::vector<int>(num_bins, num_bins * num_bins);
+
+        if (type == TESTCASE_4) {
+            std::random_device rd;
+            std::mt19937 g(rd());
+            std::ranges::shuffle(h_input, g);
+        }
     } else {
         return;
     }
@@ -112,5 +124,7 @@ int main() {
     testcase(TESTCASE_2);
     std::cout << "Running TESTCASE_3:" << std::endl;
     testcase(TESTCASE_3);
+    std::cout << "Running TESTCASE_4:" << std::endl;
+    testcase(TESTCASE_4);
     return 0;
 }
