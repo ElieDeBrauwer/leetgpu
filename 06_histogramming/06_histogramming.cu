@@ -8,12 +8,32 @@
 #include <random>
 #include <algorithm>
 
-__global__ static void histogram_kernel(const int *input, int *output, int N) {
+__global__ static void histogram_kernel(const int *input, int *output, int N, int num_bins) {
     unsigned int thread_id = blockIdx.x * blockDim.x + threadIdx.x;
 
+    // Set up and initialize shared memory.
+    extern __shared__ int shared_bins[];
+
+    for ( auto idx = threadIdx.x; idx < num_bins; idx += blockDim.x) {
+        shared_bins[idx] = 0;
+    }
+    __syncthreads();
+
+    // Add bins to shared memory
     if (thread_id < N) {
         int bin_index = input[thread_id];
-        atomicAdd(&output[bin_index], 1);
+        if (bin_index < num_bins && bin_index >= 0) {
+            atomicAdd(&shared_bins[bin_index], 1);
+        }
+    }
+
+    __syncthreads();
+
+    // Write back to global memory
+    for ( auto idx = threadIdx.x; idx < num_bins; idx += blockDim.x) {
+        if (shared_bins[idx] > 0) {
+            atomicAdd(&output[idx], shared_bins[idx]);
+        }
     }
 }
 
@@ -24,7 +44,10 @@ extern "C" void solve(const int* input, int* histogram, int N, int num_bins) {
     // Initialize output
     cudaMemset(histogram, 0, static_cast<size_t>(num_bins) * sizeof(int));
 
-    histogram_kernel<<<blocks_per_grid, threads_per_block>>>(input, histogram, N);
+    size_t shared_mem_size = num_bins * sizeof(int);
+
+
+    histogram_kernel<<<blocks_per_grid, threads_per_block, shared_mem_size>>>(input, histogram, N, num_bins);
 }
 
 namespace {
