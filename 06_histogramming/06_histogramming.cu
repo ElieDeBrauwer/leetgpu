@@ -10,6 +10,7 @@
 
 __global__ static void histogram_kernel(const int *input, int *output, int N, int num_bins) {
     unsigned int thread_id = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int stride = blockDim.x * gridDim.x;
 
     // Set up and initialize shared memory.
     extern __shared__ int shared_bins[];
@@ -19,9 +20,9 @@ __global__ static void histogram_kernel(const int *input, int *output, int N, in
     }
     __syncthreads();
 
-    // Add bins to shared memory
-    if (thread_id < N) {
-        int bin_index = input[thread_id];
+    // Add bins to shared memory using stride
+    for (auto i = thread_id; i < N; i += stride) {
+        int bin_index = input[i];
         if (bin_index < num_bins && bin_index >= 0) {
             atomicAdd(&shared_bins[bin_index], 1);
         }
@@ -38,14 +39,20 @@ __global__ static void histogram_kernel(const int *input, int *output, int N, in
 }
 
 extern "C" void solve(const int* input, int* histogram, int N, int num_bins) {
-    int threads_per_block = 256;
-    int blocks_per_grid = (N + threads_per_block - 1) / threads_per_block;
-
     // Initialize output
     cudaMemset(histogram, 0, static_cast<size_t>(num_bins) * sizeof(int));
-
     size_t shared_mem_size = num_bins * sizeof(int);
 
+    // Obtain SM count, figure out ideal occupancy
+    int device_id = 0;
+    int num_sm = 0;
+    cudaGetDevice(&device_id);
+    cudaDeviceGetAttribute(&num_sm, cudaDevAttrMultiProcessorCount, device_id);
+
+    int blocks_per_sm = 0;
+    int threads_per_block = 256;
+    cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocks_per_sm, histogram_kernel, threads_per_block, shared_mem_size);
+    int blocks_per_grid = num_sm * blocks_per_sm;
 
     histogram_kernel<<<blocks_per_grid, threads_per_block, shared_mem_size>>>(input, histogram, N, num_bins);
 }
