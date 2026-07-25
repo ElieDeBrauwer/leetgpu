@@ -74,17 +74,21 @@ static void testcase(TestCaseType type) {
     } else if (type == TESTCASE_3 || type == TESTCASE_4) {
         N = 1024 * 1024 * 1024;
         num_bins = 1024;
+        std::cout << "Filling array...." << std::flush;
         for (int i = 0; i < num_bins * num_bins; ++i) {
             for (int j = 0; j < num_bins; ++j) {
                 h_input.push_back(j);
             }
         }
+        std::cout << "done\n";
         h_expected = std::vector<int>(num_bins, num_bins * num_bins);
 
         if (type == TESTCASE_4) {
             std::random_device rd;
             std::mt19937 g(rd());
+            std::cout << "Shuffling array...." << std::flush;
             std::ranges::shuffle(h_input, g);
+            std::cout << "done\n";
         }
     } else {
         return;
