@@ -20,3 +20,4 @@ add_executable(03_softmax_attention 03_softmax_attention/03_softmax_attention.cu
 add_executable(04_2d_convolution 04_2d_convolution/04_2d_convolution.cu)
 add_executable(05_3d_convolution 05_3d_convolution/05_3d_convolution.cu)
 add_executable(06_histogramming 06_histogramming/06_histogramming.cu)
+add_executable(07_prefix_sum 07_prefix_sum/07_prefix_sum.cu)
