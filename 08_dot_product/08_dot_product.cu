@@ -94,18 +94,28 @@ __global__ void dot_product_kernel(const float *A, const float *B, float *result
  * @param N The length of d_A and d_B.
  */
 extern "C" void solve(const float *d_A, const float *d_B, float *d_out, int N) {
-    constexpr int threads_per_block = 256;
-    int blocks_per_grid = 1; // Default for small N
-
+    int num_sms = 0;
+    int max_blocks_per_sm = 0;
+    int device_id = 0;
+    int threads_per_block = 256;
+    int blocks_per_grid = 1; // Only a single block per grid for small N
     if (N > threads_per_block) {
-        // Large N: limit blocks to saturate SM occupancy without high atomic contention
-        int max_blocks = 1024;
-        blocks_per_grid = (N + threads_per_block - 1) / threads_per_block;
-        if (blocks_per_grid > max_blocks) {
-            blocks_per_grid = max_blocks;
-        }
+        cudaGetDevice(&device_id);
+        cudaDeviceGetAttribute(&num_sms, cudaDevAttrMultiProcessorCount, device_id);
+
+        // Dynamically computes how many blocks of this kernel can run per SM
+        cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            &max_blocks_per_sm,
+            dot_product_kernel,
+            threads_per_block,
+            0 // shared memory size
+        );
+
+        blocks_per_grid = num_sms * max_blocks_per_sm;
     }
 
+
+    cudaMemset(d_out, 0, sizeof(float));
     dot_product_kernel<<<blocks_per_grid, threads_per_block>>>(d_A, d_B, d_out, N);
 }
 
@@ -126,7 +136,7 @@ static void testcase(TestCaseType type) {
     int N;
     std::vector<float> h_A, h_B;
     float h_output = 0;
-    float h_expected;
+    double h_expected;
 
     if (type == TESTCASE_1) {
         N = 4;
@@ -181,7 +191,7 @@ static void testcase(TestCaseType type) {
 
     cudaMemcpy(&h_output, d_result, sizeof(float), cudaMemcpyDeviceToHost);
 
-    if (std::abs(h_output - h_expected) < EPSILON) {
+    if (std::abs(h_output - static_cast<float>(h_expected)) < EPSILON) {
         std::cout << "Test case passed!" << std::endl;
     } else {
         std::cout << "Test case failed!" << std::endl;
