@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 4.2)
+cmake_minimum_required(VERSION 3.20)
 set(CMAKE_CUDA_COMPILER /usr/local/cuda/bin/nvcc)
 project(leetgpu CUDA)
 
@@ -23,3 +23,4 @@ add_executable(06_histogramming 06_histogramming/06_histogramming.cu)
 add_executable(07_prefix_sum 07_prefix_sum/07_prefix_sum.cu)
 add_executable(08_dot_product 08_dot_product/08_dot_product.cu)
 add_executable(09_sparse_matrix 09_sparse_matrix/09_sparse_matrix.cu)
+add_executable(10_gemm 10_gemm/10_gemm.cu)
